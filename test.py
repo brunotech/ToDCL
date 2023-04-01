@@ -65,14 +65,13 @@ def get_example_inputs(model,tokenizer,prompt_text,device):
     position_ids = (attention_mask.long().cumsum(-1) - 1)
     position_ids.masked_fill_(position_ids < 0, 0)
 
-    #Empty Past State for generating first word
-    empty_past = []
     batch_size = input_ids.size(0)
     sequence_length = input_ids.size(1)
     past_shape = [2, batch_size, num_attention_heads, 0, hidden_size // num_attention_heads]
-    for i in range(num_layer):
-        empty_past.append(torch.empty(past_shape).type(torch.float32).to(device))
-
+    empty_past = [
+        torch.empty(past_shape).type(torch.float32).to(device)
+        for _ in range(num_layer)
+    ]
     return input_ids.to(device), attention_mask.to(device), position_ids.to(device), empty_past
 
 
@@ -86,13 +85,23 @@ def test_generation_GPT2BATCH(model, tokenizer, input_text, device, do_sample=Fa
 
     all_token_ids = input_ids.clone()
 
-    for step in range(max_length):
-
-        if task_id == -1:
-            outputs = model(input_ids, attention_mask=attention_mask, position_ids=position_ids, past_key_values=past)
-        else:
-            outputs = model(input_ids, attention_mask=attention_mask, position_ids=position_ids, past_key_values=past, task_id=task_id)
-
+    for _ in range(max_length):
+        outputs = (
+            model(
+                input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past,
+            )
+            if task_id == -1
+            else model(
+                input_ids,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_values=past,
+                task_id=task_id,
+            )
+        )
         next_token_logits = outputs[0][:, -1, :]
 
         if do_sample:
@@ -123,7 +132,7 @@ def test_generation_GPT2BATCH(model, tokenizer, input_text, device, do_sample=Fa
 
     responses = []
     responses_plain = []
-    for i, output in enumerate(all_token_ids):
+    for output in all_token_ids:
         responses_plain.append(tokenizer.decode(output, skip_special_tokens=True))
         res = tokenizer.decode(output, skip_special_tokens=True)
         responses.append(res[res.find("[SOS]"):].replace("[SOS]","").strip())
@@ -131,7 +140,7 @@ def test_generation_GPT2BATCH(model, tokenizer, input_text, device, do_sample=Fa
 
 def generate_sample_prev_task(args,model,tokenizer,dataset_dic,task_id_so_far,number_of_sample,time,task_id_adpt=-1):
     # device = torch.device(f"cuda:{args.GPU[0]}")
-    device = torch.device(f"cuda:0")
+    device = torch.device("cuda:0")
     model.to(device)
     model.eval()
     ## notice that this sample is just to have the data struct
@@ -176,7 +185,7 @@ def generate_sample_prev_task(args,model,tokenizer,dataset_dic,task_id_so_far,nu
     return temp_aug
 
 def test_model_seq2seq(args,model,tokenizer,test_loader,time="0_['']"):
-    device = torch.device(f"cuda:0")
+    device = torch.device("cuda:0")
     model.to(device)
     model.eval()
     results = []
@@ -184,26 +193,36 @@ def test_model_seq2seq(args,model,tokenizer,test_loader,time="0_['']"):
     for idx_b, batch in tqdm(enumerate(test_loader),total=len(test_loader)):
         with torch.no_grad():
             if "gpt2" in args.model_checkpoint:
-                value_batch,_ = test_generation_GPT2BATCH(model=model,
-                                                    tokenizer=tokenizer,
-                                                    input_text=[b+"[SOS]" for b in batch['history']],
-                                                    device=device,
-                                                    max_length = 100)
+                value_batch, _ = test_generation_GPT2BATCH(
+                    model=model,
+                    tokenizer=tokenizer,
+                    input_text=[f"{b}[SOS]" for b in batch['history']],
+                    device=device,
+                    max_length=100,
+                )
             else:
                 responses = model.generate(input_ids=batch["encoder_input"].to(device),
                                             attention_mask=batch["attention_mask"].to(device),
                                             eos_token_id=tokenizer.eos_token_id,
                                             max_length=100)
                 value_batch = tokenizer.batch_decode(responses, skip_special_tokens=True)
-        for idx, resp in enumerate(value_batch):
-            results.append({"id":batch["dial_id"][idx],"turn_id":batch["turn_id"][idx],
-                            "dataset":batch["dataset"][idx],"task_id":batch["task_id"][idx],
-                            "spk":batch["spk"][idx],"gold":batch["reply"][idx],
-                            "genr":resp,"hist":batch["history"][idx]})
-        # if(idx_b==1): break
+        results.extend(
+            {
+                "id": batch["dial_id"][idx],
+                "turn_id": batch["turn_id"][idx],
+                "dataset": batch["dataset"][idx],
+                "task_id": batch["task_id"][idx],
+                "spk": batch["spk"][idx],
+                "gold": batch["reply"][idx],
+                "genr": resp,
+                "hist": batch["history"][idx],
+            }
+            for idx, resp in enumerate(value_batch)
+        )
+            # if(idx_b==1): break
     if not os.path.exists(f'{args.saving_dir}/{time}'):
         os.makedirs(f'{args.saving_dir}/{time}')
-    with open(f'{args.saving_dir}/{time}'+'/generated_responses.json', 'w') as fp:
+    with open(f'{args.saving_dir}/{time}/generated_responses.json', 'w') as fp:
         json.dump(results, fp, indent=4)
     tokenizer.padding_side = "right"
 
@@ -213,7 +232,7 @@ def argmin(a):
 
 def test_model_seq2seq_ADAPTER(args,model,tokenizer,test_loader,test_dataset,time="0_['']",max_seen_task=0):
     # device = torch.device(f"cuda:{args.GPU[0]}")
-    device = torch.device(f"cuda:0")
+    device = torch.device("cuda:0")
     model.model.to(device)
     model.model.eval()
     results = []
@@ -252,27 +271,37 @@ def test_model_seq2seq_ADAPTER(args,model,tokenizer,test_loader,test_dataset,tim
 
     ## create a dataloader for batch each of this
     test_dataset_by_predicted_id = {k: make_loader(args,v,model.tokenizer) for k,v in test_dataset_by_predicted_id.items()}
-    
+
     for pred_task_id, task_loader in tqdm(test_dataset_by_predicted_id.items(),total=len(test_dataset_by_predicted_id)):
         # print(f"Task Id: {task_id}")
         for idx_b, batch in tqdm(enumerate(task_loader),total=len(task_loader)):
             with torch.no_grad():
-                value_batch,_ = test_generation_GPT2BATCH(model=model.model,
-                                                    tokenizer=model.tokenizer,
-                                                    input_text=[b+"[SOS]" for b in batch['history']],
-                                                    device=device,
-                                                    max_length=100,
-                                                    task_id=pred_task_id)
-            for idx, resp in enumerate(value_batch):
-                results.append({"id":batch["dial_id"][idx],"turn_id":batch["turn_id"][idx],
-                                "dataset":batch["dataset"][idx],"task_id":batch["task_id"][idx],
-                                "spk":batch["spk"][idx],"gold":batch["reply"][idx],
-                                "genr":resp,"hist":batch["history"][idx],"pred_task_id":pred_task_id})
-            
-            # if(idx_b==1): break
+                value_batch, _ = test_generation_GPT2BATCH(
+                    model=model.model,
+                    tokenizer=model.tokenizer,
+                    input_text=[f"{b}[SOS]" for b in batch['history']],
+                    device=device,
+                    max_length=100,
+                    task_id=pred_task_id,
+                )
+            results.extend(
+                {
+                    "id": batch["dial_id"][idx],
+                    "turn_id": batch["turn_id"][idx],
+                    "dataset": batch["dataset"][idx],
+                    "task_id": batch["task_id"][idx],
+                    "spk": batch["spk"][idx],
+                    "gold": batch["reply"][idx],
+                    "genr": resp,
+                    "hist": batch["history"][idx],
+                    "pred_task_id": pred_task_id,
+                }
+                for idx, resp in enumerate(value_batch)
+            )            
+                    # if(idx_b==1): break
     if not os.path.exists(f'{args.saving_dir}/{time}'):
         os.makedirs(f'{args.saving_dir}/{time}')
-    with open(f'{args.saving_dir}/{time}'+'/generated_responses.json', 'w') as fp:
+    with open(f'{args.saving_dir}/{time}/generated_responses.json', 'w') as fp:
         json.dump(results, fp, indent=4)
     tokenizer.padding_side = "right"
 

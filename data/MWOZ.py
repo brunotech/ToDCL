@@ -17,17 +17,16 @@ def get_value_dst(DST):
 
 
 def get_domains(goal):
-    dom = []
-    for d, g in goal.items():
-        if(len(g)!=0) and d!= "message" and d!= "topic":
-            dom.append("MWOZ_"+d)
-    return dom
+    return [
+        f"MWOZ_{d}"
+        for d, g in goal.items()
+        if (len(g) != 0) and d != "message" and d != "topic"
+    ]
 
 def loadCSV(split):
     split_id = []
     with open(f"data/multiwoz/data/MultiWOZ_2.1/{split}ListFile.txt") as f:
-        for l in f:
-            split_id.append(l.replace("\n",""))
+        split_id.extend(l.replace("\n","") for l in f)
     return split_id
 
 def preprocessMWOZ(develop=False):
@@ -39,7 +38,7 @@ def preprocessMWOZ(develop=False):
         turns =[]
         dst_prev = {}
         for t_idx, t in enumerate(d['log']):
-            if(t_idx % 2 ==0):
+            if (t_idx % 2 ==0):
                 turns.append({"dataset":"MWOZ","id":d_idx,"turn_id":t_idx,"spk":"USER","utt":t["text"]})
                 # print("USER",t["text"])
                 str_API_ACT = ""
@@ -99,8 +98,25 @@ def preprocessMWOZ(develop=False):
                             # str_ACT += f'{k.lower().replace("-",".")} '
                             str_ACT += f"{k.lower().replace('-','_')}() "
 
-                turns.append({"dataset":"MWOZ","id":d_idx,"turn_id":t_idx,"spk":"API-OUT","utt":str_ACT,"service":None})
-                turns.append({"dataset":"MWOZ","id":d_idx,"turn_id":t_idx,"spk":"SYSTEM","utt":t["text"]})
+                turns.extend(
+                    (
+                        {
+                            "dataset": "MWOZ",
+                            "id": d_idx,
+                            "turn_id": t_idx,
+                            "spk": "API-OUT",
+                            "utt": str_ACT,
+                            "service": None,
+                        },
+                        {
+                            "dataset": "MWOZ",
+                            "id": d_idx,
+                            "turn_id": t_idx,
+                            "spk": "SYSTEM",
+                            "utt": t["text"],
+                        },
+                    )
+                )
         dial["dialogue"] = turns
         data.append(dial)
         if(develop and i_d==10): break

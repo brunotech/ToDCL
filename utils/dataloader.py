@@ -24,8 +24,7 @@ class DatasetTrain(Dataset):
 
     def __getitem__(self, index):
         """Returns one data pair (source and target)."""
-        item = self.data[index]
-        return item
+        return self.data[index]
 
     def __len__(self):
         return self.dataset_len
@@ -108,20 +107,24 @@ def get_NLG_from_dial(args,data,task_id,tokenizer):
             ## DUPLICATE DIALOGUE
             if f'{t["id"]}' == "dlg-ff2b8de2-467d-4917-be13-1529765752e9":
                 continue
-            if(t['spk']=="USER"):
+            if (t['spk']=="USER"):
                 plain_history.append(f"{t['spk']}: {t['utt'].strip()}")
             elif(t['spk']=="API-OUT"):
                 latest_API_OUT = f"{t['utt'].strip()}"
-            elif((t['spk'] == "SYSTEM") and idx_t!=0 and t["utt"]!= ""):
-                if(latest_API_OUT != ""):
-                    dialogues.append({"history":latest_API_OUT,
-                                    "reply":f'{t["utt"].strip()} {tokenizer.eos_token}',
-                                    "history_reply": latest_API_OUT + f'[SOS]{t["utt"].strip()} {tokenizer.eos_token}',
-                                    "spk":t["spk"],
-                                    "dataset":t["dataset"],
-                                    "dial_id":t["id"],
-                                    "turn_id":t["turn_id"],
-                                    "task_id":task_id})
+            elif ((t['spk'] == "SYSTEM") and idx_t!=0 and t["utt"]!= ""):
+                if (latest_API_OUT != ""):
+                    dialogues.append(
+                        {
+                            "history": latest_API_OUT,
+                            "reply": f'{t["utt"].strip()} {tokenizer.eos_token}',
+                            "history_reply": f'{latest_API_OUT}[SOS]{t["utt"].strip()} {tokenizer.eos_token}',
+                            "spk": t["spk"],
+                            "dataset": t["dataset"],
+                            "dial_id": t["id"],
+                            "turn_id": t["turn_id"],
+                            "task_id": task_id,
+                        }
+                    )
                 plain_history.append(f"{t['spk']}: {t['utt'].strip()}")
                 latest_API_OUT = ""
 
@@ -141,9 +144,6 @@ def get_e2e_from_dial(args,data,task_id,tokenizer):
         plain_history = []
         latest_API_OUT = "API-OUT: "
         for idx_t, t in enumerate(dial['dialogue']):
-            ## DUPLICATE DIALOGUE
-            if f'{t["id"]}' == "dlg-ff2b8de2-467d-4917-be13-1529765752e9" and f'{t["id"]}' == "dlg-fdd242eb-56be-48c0-a56e-5478472500d0":
-                continue
             if(t['spk']=="USER"):
                 plain_history.append(f"{t['spk']}: {t['utt'].strip()}")
             elif(t['spk']=="API-OUT"):
@@ -183,12 +183,9 @@ def get_current_task_data(args,dataset_dic,task_id,number_of_sample):
     cnt_API = 0
     for d in temp_aug:
         ## add a first token for the generation
-        if(args.task_type=="E2E"):
-            if(d["spk"]=="API"):
-                cnt_API += 1
-                d["history_reply"] = f"[{str(eval(task_id)[0])}-API]"+d["history_reply"]
-            else:
-                d["history_reply"] = f"[{str(eval(task_id)[0])}]"+d["history_reply"]
+        if (args.task_type == "E2E") and (d["spk"] == "API"):
+            cnt_API += 1
+            d["history_reply"] = f"[{str(eval(task_id)[0])}-API]"+d["history_reply"]
         else:
             d["history_reply"] = f"[{str(eval(task_id)[0])}]"+d["history_reply"]
         aug_data.append(d)
@@ -196,10 +193,7 @@ def get_current_task_data(args,dataset_dic,task_id,number_of_sample):
 
 
 def collate_fn(data,tokenizer):
-    batch_data = {}
-    for key in data[0]:
-        batch_data[key] = [d[key] for d in data]
-
+    batch_data = {key: [d[key] for d in data] for key in data[0]}
     input_batch = tokenizer(batch_data["history"], padding=True, return_tensors="pt", truncation=False,add_special_tokens=False)
     batch_data["encoder_input"] = input_batch["input_ids"]
     batch_data["attention_mask"] = input_batch["attention_mask"]
@@ -210,10 +204,7 @@ def collate_fn(data,tokenizer):
     return batch_data
 
 def collate_fn_GPT2(data,tokenizer):
-    batch_data = {}
-    for key in data[0]:
-        batch_data[key] = [d[key] for d in data]
-
+    batch_data = {key: [d[key] for d in data] for key in data[0]}
     input_batch = tokenizer(batch_data["history_reply"], padding=True, return_tensors="pt", truncation=False,add_special_tokens=False,return_attention_mask=False)
     batch_data["encoder_input"] = input_batch["input_ids"]
     batch_data["attention_mask"] = None
@@ -240,12 +231,8 @@ def get_data_loaders(args, tokenizer, test=False):
     aggregate = get_datasets(dataset_list=args.dataset_list.split(','),setting=args.setting,verbose=args.verbose,develop=args.debug)
 
     collate_fn_ = collate_fn_GPT2 if("gpt2" in args.model_checkpoint) else collate_fn
-    if(test):
-        datasets = {"test":{}}
-    else:
-        datasets = {"train":{}, "dev": {}, "test":{}}
-
-    for split in datasets.keys():
+    datasets = {"test":{}} if test else {"train":{}, "dev": {}, "test":{}}
+    for split in datasets:
         for tasks_id, task in aggregate["BYDOMAIN"][split].items():
             if(args.task_type == "E2E"):
                 datasets[split][tasks_id] = get_e2e_from_dial(args,task,tasks_id,tokenizer)
@@ -257,9 +244,11 @@ def get_data_loaders(args, tokenizer, test=False):
                 datasets[split][tasks_id] = get_NLG_from_dial(args,task,tasks_id,tokenizer)
 
 
-    task_id_train = set(task_id for task_id, dataset_task in datasets["train"].items())
-    task_id_dev = set(task_id for task_id, dataset_task in datasets["dev"].items())
-    task_id_test = set(task_id for task_id, dataset_task in datasets["test"].items())
+    task_id_train = {
+        task_id for task_id, dataset_task in datasets["train"].items()
+    }
+    task_id_dev = {task_id for task_id, dataset_task in datasets["dev"].items()}
+    task_id_test = {task_id for task_id, dataset_task in datasets["test"].items()}
     common_task_id = list(task_id_train & task_id_dev & task_id_test)
 
     ### LOGGING SOME INFORMATION ABOUT THE TASKS
@@ -269,9 +258,15 @@ def get_data_loaders(args, tokenizer, test=False):
     for split in ["train","dev","test"]:
         for task_id, dataset_task in datasets[split].items():
             task[task_id][split] = len(dataset_task)
-    table = []
-    for dom_name, split_len in task.items():
-        table.append({"dom":dom_name, "train":split_len["train"], "dev":split_len["dev"], "test":split_len["test"]})
+    table = [
+        {
+            "dom": dom_name,
+            "train": split_len["train"],
+            "dev": split_len["dev"],
+            "test": split_len["test"],
+        }
+        for dom_name, split_len in task.items()
+    ]
     print(tabulate(table, headers="keys"))
 
     train_loaders = {}
@@ -302,10 +297,11 @@ def get_data_loaders(args, tokenizer, test=False):
                     dataset_dev += dataset_task
             valid_loaders = DataLoader(DatasetTrain(dataset_dev), batch_size=args.valid_batch_size, shuffle=False,collate_fn=partial(collate_fn_, tokenizer=tokenizer))
 
-    temp_list = []
-    for task_id, dataset_task in datasets["test"].items():
-        if(task_id in common_task_id):
-            temp_list.append(dataset_task)
+    temp_list = [
+        dataset_task
+        for task_id, dataset_task in datasets["test"].items()
+        if (task_id in common_task_id)
+    ]
     test_datasets = sum(temp_list,[])
     test_loaders = DataLoader(DatasetTrain(sum(temp_list,[])), batch_size=args.valid_batch_size, shuffle=False,collate_fn=partial(collate_fn_, tokenizer=tokenizer))
 

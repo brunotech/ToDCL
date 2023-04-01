@@ -14,18 +14,19 @@ from dictdiffer import diff
 def parse_API(text):
     API = defaultdict(lambda:defaultdict(str))
     for function in text.split(") "):
-        if(function!=""):
-            if("(" in function and len(function.split("("))==2):
-                intent, parameters = function.split("(")
-                parameters = sum([s.split('",') for s in parameters.split("=")],[])
-                if len(parameters)>1:
-                    if len(parameters) % 2 != 0:
-                        parameters = parameters[:-1]
+        if (function != "") and (
+            "(" in function and len(function.split("(")) == 2
+        ):
+            intent, parameters = function.split("(")
+            parameters = sum((s.split('",') for s in parameters.split("=")), [])
+            if len(parameters)>1:
+                if len(parameters) % 2 != 0:
+                    parameters = parameters[:-1]
 
-                    for i in range(0,len(parameters),2):
-                        API[intent][parameters[i]] = parameters[i+1].replace('"',"")
+                for i in range(0,len(parameters),2):
+                    API[intent][parameters[i]] = parameters[i+1].replace('"',"")
 
-                if(len(API)==0): API[intent]["none"] = "none"
+            if not API: API[intent]["none"] = "none"
     return API
 
 def evaluate_INTENT(pred,gold,domain):
@@ -47,11 +48,11 @@ def evaluate_API(pred,gold):
     for p, g in zip(pred,gold):
         API_G = {}
         API_P = {}
-        p = p+" "
-        if(g!=""):
+        if (g!=""):
             API_G = parse_API(g)
+            p = f"{p} "
             # print(API_G)
-            if(p!="" and "(" in p and ")"): ## means the predicted text is an API
+            if p != "" and "(" in p: ## means the predicted text is an API
                 API_P = parse_API(p)
                 if len(API_G.keys()) != 1: 
                     continue
@@ -68,8 +69,8 @@ def evaluate_API(pred,gold):
 
                 state_G = {s:v for s,v in API_G[intent_G].items() if s !="none"}
                 state_P = {s:v for s,v in API_P[intent_P].items() if s !="none"}
-                
-                if(len([d for d in diff(state_G,state_P)])==0):
+
+                if not list(diff(state_G, state_P)):
                     turn_level_joint_acc.append(1)
                 else:
                     turn_level_joint_acc.append(0)
@@ -146,7 +147,7 @@ def evaluate(args,path,names,ent={}):
 
     T_BLEU = {}
     T_NLG = {}
-    if args.task_type =="NLG" or args.task_type =="E2E":
+    if args.task_type in ["NLG", "E2E"]:
         for k, sample_NLG in domain_NLG.items():
             T_NLG[k] = evaluate_EER(args,sample_NLG,entities_json, path, names)
         for k,v in domain_BLEU.items():
@@ -158,7 +159,7 @@ def evaluate(args,path,names,ent={}):
             T_API[k] = 0
         if args.task_type =="INTENT":
             T_API[k] = evaluate_INTENT(v["pred"],v["gold"],domain="")
-        if args.task_type =="E2E" or args.task_type =="DST":
+        if args.task_type in ["E2E", "DST"]:
             T_API[k] = evaluate_API(v["pred"],v["gold"])
 
     return {"API":T_API, "BLEU":T_BLEU, "EER":T_NLG, "ACC":acc}

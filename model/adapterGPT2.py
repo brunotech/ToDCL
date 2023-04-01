@@ -45,7 +45,7 @@ class ModelOutput(OrderedDict):
                 for element in iterator:
                     if (
                         not isinstance(element, (list, tuple))
-                        or not len(element) == 2
+                        or len(element) != 2
                         or not isinstance(element[0], str)
                     ):
                         break
@@ -73,11 +73,10 @@ class ModelOutput(OrderedDict):
         raise Exception(f"You cannot use ``update`` on a {self.__class__.__name__} instance.")
 
     def __getitem__(self, k):
-        if isinstance(k, str):
-            inner_dict = {k: v for (k, v) in self.items()}
-            return inner_dict[k]
-        else:
+        if not isinstance(k, str):
             return self.to_tuple()[k]
+        inner_dict = dict(self.items())
+        return inner_dict[k]
 
     def __setattr__(self, name, value):
         if name in self.keys() and value is not None:
@@ -184,10 +183,7 @@ class MixAdapter(nn.Module):
         self.mixadapter = nn.ModuleList([Adapter(config, bottleneck_size) for _ in range(adapter_num)])
 
     def forward(self, x, task_id=-1):
-        if task_id==-1:
-            return x
-        else:
-            return self.mixadapter[task_id](x)
+        return x if task_id==-1 else self.mixadapter[task_id](x)
 
 
 class GPT2Adapter(GPT2PreTrainedModel):
@@ -209,8 +205,8 @@ class GPT2Adapter(GPT2PreTrainedModel):
         if past:
             input_ids = input_ids[:, -1].unsqueeze(-1)
 
-        attention_mask = kwargs.get("attention_mask", None)
-        position_ids = kwargs.get("position_ids", None)
+        attention_mask = kwargs.get("attention_mask")
+        position_ids = kwargs.get("position_ids")
 
         if attention_mask is not None and position_ids is None:
             # create postion_ids on the fly for batch generation
@@ -261,7 +257,7 @@ class GPT2Adapter(GPT2PreTrainedModel):
                 FutureWarning,
             )
             past_key_values = kwargs.pop("past")
-        assert kwargs == {}, f"Unexpected keyword arguments: {list(kwargs.keys())}."
+        assert not kwargs, f"Unexpected keyword arguments: {list(kwargs.keys())}."
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
 
@@ -288,7 +284,7 @@ class GPT2Adapter(GPT2PreTrainedModel):
                 FutureWarning,
             )
             past_key_values = kwargs.pop("past")
-        assert kwargs == {}, f"Unexpected keyword arguments: {list(kwargs.keys())}."
+        assert not kwargs, f"Unexpected keyword arguments: {list(kwargs.keys())}."
 
         output_attentions = output_attentions if output_attentions is not None else self.transformer.config.output_attentions
         output_hidden_states = (
@@ -386,7 +382,7 @@ class GPT2Adapter(GPT2PreTrainedModel):
                 def create_custom_forward(module):
                     def custom_forward(*inputs):
                         # checkpointing only works with tuple returns, not with lists
-                        return tuple(output for output in module(*inputs, use_cache, output_attentions))
+                        return tuple(module(*inputs, use_cache, output_attentions))
 
                     return custom_forward
 
@@ -410,7 +406,7 @@ class GPT2Adapter(GPT2PreTrainedModel):
                     use_cache=use_cache,
                     output_attentions=output_attentions,
                 )
-                
+
             outputs[0] = adapter(outputs[0], task_id=task_id)
 
             hidden_states, present = outputs[:2]
@@ -427,17 +423,25 @@ class GPT2Adapter(GPT2PreTrainedModel):
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
 
-        if not return_dict:
-            transformer_outputs = tuple(v for v in [hidden_states, presents, all_hidden_states, all_attentions] if v is not None)
-        else:
-            transformer_outputs = BaseModelOutputWithPast(
+        transformer_outputs = (
+            BaseModelOutputWithPast(
                 last_hidden_state=hidden_states,
                 past_key_values=presents,
                 hidden_states=all_hidden_states,
                 attentions=all_attentions,
             )
-
-
+            if return_dict
+            else tuple(
+                v
+                for v in [
+                    hidden_states,
+                    presents,
+                    all_hidden_states,
+                    all_attentions,
+                ]
+                if v is not None
+            )
+        )
         hidden_states = transformer_outputs[0]
 
         lm_logits = self.lm_head(hidden_states)
@@ -450,7 +454,7 @@ class GPT2Adapter(GPT2PreTrainedModel):
             # Flatten the tokens
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-            
+
         if not return_dict:
             output = (lm_logits,) + transformer_outputs[1:]
             return ((loss,) + output) if loss is not None else output

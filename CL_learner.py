@@ -49,8 +49,7 @@ class Seq2SeqToD(pl.LightningModule):
 
     def set_up_gem(self):
         self.grad_dims = []
-        for param in self.model.parameters():
-            self.grad_dims.append(param.data.numel())
+        self.grad_dims.extend(param.data.numel() for param in self.model.parameters())
         dev = next(self.model.parameters()).device
         self.grads = torch.Tensor(sum(self.grad_dims), self.n_tasks).to(dev)
 
@@ -86,7 +85,7 @@ class Seq2SeqToD(pl.LightningModule):
                 store_grad(self.model.parameters, self.grads, self.grad_dims, id_task)
             self.model.zero_grad()
 
-        elif(self.CL == "AGEM" and not self.first_task):
+        elif (self.CL == "AGEM" and not self.first_task):
             dev = next(self.model.parameters()).device
             batch_mem = sample(self.episodic_mem["all"],1)[0] # ==> we sample one batch from episodic memory
             self.model.zero_grad()
@@ -95,10 +94,9 @@ class Seq2SeqToD(pl.LightningModule):
                 labels=batch_mem["decoder_output"].to(dev)
                 )
             loss.backward()
-            grad_ref = []
-            for p in self.model.parameters():
-                if p.requires_grad:
-                    grad_ref.append(p.grad.view(-1))
+            grad_ref = [
+                p.grad.view(-1) for p in self.model.parameters() if p.requires_grad
+            ]
             grad_ref = torch.cat(grad_ref) ## from eq. 10 of AGEM Paper
 
             self.model.zero_grad()
@@ -117,13 +115,12 @@ class Seq2SeqToD(pl.LightningModule):
                     attention_mask=batch["attention_mask"],
                     labels=batch["decoder_output"])
 
-        if(self.CL == "AGEM" and not self.first_task):
+        if (self.CL == "AGEM" and not self.first_task):
             ## Code from https://github.com/GMvandeVen/continual-learning/blob/master/encoder.py#L244
             loss.backward()
-            grad_cur = []
-            for p in self.model.parameters():
-                if p.requires_grad:
-                    grad_cur.append(p.grad.view(-1))
+            grad_cur = [
+                p.grad.view(-1) for p in self.model.parameters() if p.requires_grad
+            ]
             grad_cur = torch.cat(grad_cur)
             # -check inequality constrain
             angle = (grad_cur*grad_ref).sum()
@@ -141,7 +138,7 @@ class Seq2SeqToD(pl.LightningModule):
         elif self.CL == "GEM" and not self.first_task:
             loss.backward()
             store_grad(self.model.parameters, self.grads, self.grad_dims, id_task+1)
-            indx = torch.LongTensor([j for j in range(id_task+1)])
+            indx = torch.LongTensor(list(range(id_task+1)))
             dotp = torch.mm(self.grads.to(dev)[:, id_task].unsqueeze(0), self.grads.to(dev).index_select(1, indx.to(dev)))
             if (dotp < 0).sum() != 0:
                 project2cone2(self.grads.to(dev)[:, id_task].unsqueeze(1), self.grads.to(dev).index_select(1, indx.to(dev)), self.reg)
@@ -189,14 +186,11 @@ class Seq2SeqToD(pl.LightningModule):
 
 
     def configure_optimizers(self):
-        if(self.CL=="ADAPTER"):
-            parameters_to_update = [p for n, p in self.named_parameters() if "adapter" in str(n)]
-            return AdamW(parameters_to_update, lr=self.lr, correct_bias=True)
-        else:
+        if self.CL != "ADAPTER":
             return AdamW(self.parameters(), lr=self.lr, correct_bias=True)
+        parameters_to_update = [p for n, p in self.named_parameters() if "adapter" in str(n)]
+        return AdamW(parameters_to_update, lr=self.lr, correct_bias=True)
 
     def backward(self, loss, optimizer, optimizer_idx):
-        if (self.CL == "GEM" or self.CL == "AGEM") and not self.first_task:
-            pass
-        else:
+        if self.CL not in ["GEM", "AGEM"] or self.first_task:
             loss.backward()

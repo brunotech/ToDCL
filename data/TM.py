@@ -29,24 +29,23 @@ def create_API_str(API_struct):
     return str_API
 
 def prepocess_API(frame):
-    if(frame==""):
+    if (frame==""):
         return "",None,[]
-    else:
-        API_struct = defaultdict(lambda: defaultdict(str))
-        services = set()
-        for s in frame:
-            parsed = remove_numbers_from_string(s["annotations"][-1]["name"]).split(".")
-            API_struct[parsed[0]]["_".join(parsed[1:])] = s["text"]
-            services.add(parsed[0]) 
-        # print(API_struct)
-        services = [s.strip() for s in services]
-        return create_API_str(API_struct), API_struct, list(services)
+    API_struct = defaultdict(lambda: defaultdict(str))
+    services = set()
+    for s in frame:
+        parsed = remove_numbers_from_string(s["annotations"][-1]["name"]).split(".")
+        API_struct[parsed[0]]["_".join(parsed[1:])] = s["text"]
+        services.add(parsed[0])
+    # print(API_struct)
+    services = [s.strip() for s in services]
+    return create_API_str(API_struct), API_struct, list(services)
 
 
 
 def fix_turn(turns):
-    for i_t, t in enumerate(turns):
-        if(t['spk']=="API-OUT" or t['spk']=="API"):
+    for t in turns:
+        if t['spk'] in ["API-OUT", "API"]:
             t['utt'], t['n_struct'], t['service'] = prepocess_API(t["struct"])
     if len(turns)>0 and turns[0]['spk'] == "API-OUT":
         turns = turns[1:]
@@ -55,10 +54,11 @@ def fix_turn(turns):
         turns = turns[:-1]
     new_turns = []
     for i_t, t in enumerate(turns):
-        if(t['spk']=="API-OUT" and t['utt']!=""):
-            if turns[i_t-1]['utt']=="":
-                new_turns[-1]["utt"] = list(turns[i_t]['n_struct'].keys())[0]+"()"
-                new_turns[-1]["service"] = [list(turns[i_t]['n_struct'].keys())[0]]
+        if (t['spk'] == "API-OUT" and t['utt'] != "") and turns[i_t - 1][
+            'utt'
+        ] == "":
+            new_turns[-1]["utt"] = list(turns[i_t]['n_struct'].keys())[0]+"()"
+            new_turns[-1]["service"] = [list(turns[i_t]['n_struct'].keys())[0]]
 
 
         new_turns.append(turns[i_t])
@@ -72,30 +72,34 @@ def get_data(dialogue,year,develop=False):
         flag = True
         serv = ""
         for dom in DOMAINS:
-            if(dom in d["instruction_id"]):
+            if (dom in d["instruction_id"]):
                 serv = f"{dom}"
                 flag = False
-            elif("hungry" in d["instruction_id"] or
+            elif ("hungry" in d["instruction_id"] or
                 "dinner" in d["instruction_id"] or
                 "lunch" in d["instruction_id"] or
                 "dessert" in d["instruction_id"]):
-                serv = f"restaurant"
+                serv = "restaurant"
                 flag = False
-            elif("nba" in d["instruction_id"] or
+            elif ("nba" in d["instruction_id"] or
                  "mlb" in d["instruction_id"] or
                  "epl" in  d["instruction_id"] or
                  "mls" in d["instruction_id"] or
                  "nfl" in d["instruction_id"] ):
-                serv = f"sport"
+                serv = "sport"
                 flag = False
         if(flag): print(d["instruction_id"])
         ####
 
-        dial = {"id":d["conversation_id"].strip(), "services": [f"TM{year}_"+serv], "dataset":f"TM{year}"}
+        dial = {
+            "id": d["conversation_id"].strip(),
+            "services": [f"TM{year}_{serv}"],
+            "dataset": f"TM{year}",
+        }
         turns =[]
         for t_idx, t in enumerate(d["utterances"]):
-            if(t["speaker"]=="USER"):
-                if(len(turns)!=0 and turns[-1]['spk']=="API"):
+            if (t["speaker"]=="USER"):
+                if turns and turns[-1]['spk'] == "API":
                     turns[-2]["utt"] += " "+t["text"]
                     if "segments" in t and type(turns[-1]["struct"])==list:
                         turns[-1]["struct"] += t["segments"]
@@ -104,22 +108,57 @@ def get_data(dialogue,year,develop=False):
                     else:
                         turns[-1]["struct"] = ""
                 else:
-                    turns.append({"dataset":f"TM{year}","id":d["conversation_id"].strip(),"turn_id":t_idx,"spk":t["speaker"],"utt":t["text"]})
-                    turns.append({"dataset":f"TM{year}","id":d["conversation_id"].strip(),"turn_id":t_idx,"spk":"API","utt":"","struct":t["segments"] if "segments" in t else "","service":[]})
-            else:
-                if(len(turns)!=0 and turns[-1]['spk']=="SYSTEM"):
-                    turns[-1]["utt"] += " "+t["text"]
-                    if "segments" in t and type(turns[-2]["struct"])==list:
-                        turns[-2]["struct"] += t["segments"]
-                    elif("segments" in t and type(turns[-2]["struct"])==str):
-                        turns[-2]["struct"] = t["segments"]
-                    else:
-                        turns[-2]["struct"] = ""
+                    turns.extend(
+                        (
+                            {
+                                "dataset": f"TM{year}",
+                                "id": d["conversation_id"].strip(),
+                                "turn_id": t_idx,
+                                "spk": t["speaker"],
+                                "utt": t["text"],
+                            },
+                            {
+                                "dataset": f"TM{year}",
+                                "id": d["conversation_id"].strip(),
+                                "turn_id": t_idx,
+                                "spk": "API",
+                                "utt": "",
+                                "struct": t["segments"]
+                                if "segments" in t
+                                else "",
+                                "service": [],
+                            },
+                        )
+                    )
+            elif turns and turns[-1]['spk'] == "SYSTEM":
+                turns[-1]["utt"] += " "+t["text"]
+                if "segments" in t and type(turns[-2]["struct"])==list:
+                    turns[-2]["struct"] += t["segments"]
+                elif("segments" in t and type(turns[-2]["struct"])==str):
+                    turns[-2]["struct"] = t["segments"]
                 else:
-                    turns.append({"dataset":f"TM{year}","id":d["conversation_id"].strip(),"turn_id":t_idx,"spk":"API-OUT","utt":"","struct":t["segments"] if "segments" in t else "","service":[]})
-                    turns.append({"dataset":f"TM{year}","id":d["conversation_id"].strip(),"turn_id":t_idx,"spk":"SYSTEM","utt":t["text"]})
-
-
+                    turns[-2]["struct"] = ""
+            else:
+                turns.extend(
+                    (
+                        {
+                            "dataset": f"TM{year}",
+                            "id": d["conversation_id"].strip(),
+                            "turn_id": t_idx,
+                            "spk": "API-OUT",
+                            "utt": "",
+                            "struct": t["segments"] if "segments" in t else "",
+                            "service": [],
+                        },
+                        {
+                            "dataset": f"TM{year}",
+                            "id": d["conversation_id"].strip(),
+                            "turn_id": t_idx,
+                            "spk": "SYSTEM",
+                            "utt": t["text"],
+                        },
+                    )
+                )
         dial["dialogue"] = fix_turn(turns)
         data.append(dial)
         if(develop and i_d==10): break
@@ -165,7 +204,7 @@ def rename_service_dialogue(dial_split,name):
 
 def preprocessTM2020(develop=False):
     data = []
-    for f in glob.glob(f"data/Taskmaster/TM-2-2020/data/*.json"):
+    for f in glob.glob("data/Taskmaster/TM-2-2020/data/*.json"):
         dialogue = json.load(open(f))
         data += get_data(dialogue,"B",develop)
 

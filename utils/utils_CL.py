@@ -11,13 +11,11 @@ def store_grad(pp, grads, grad_dims, tid):
     """
     # store the gradients
     grads[:, tid].fill_(0.0)
-    cnt = 0
-    for param in pp():
+    for cnt, param in enumerate(pp()):
         if param.grad is not None:
             beg = 0 if cnt == 0 else sum(grad_dims[:cnt])
             en = sum(grad_dims[:cnt + 1])
             grads[beg: en, tid].copy_(param.grad.data.view(-1))
-        cnt += 1
 
 def overwrite_grad(pp, newgrad, grad_dims):
     """
@@ -27,15 +25,13 @@ def overwrite_grad(pp, newgrad, grad_dims):
         newgrad: corrected gradient
         grad_dims: list storing number of parameters at each layer
     """
-    cnt = 0
-    for param in pp():
+    for cnt, param in enumerate(pp()):
         if param.grad is not None:
             beg = 0 if cnt == 0 else sum(grad_dims[:cnt])
             en = sum(grad_dims[:cnt + 1])
             this_grad = newgrad[beg: en].contiguous().view(
                 param.grad.data.size())
             param.grad.data.copy_(this_grad)
-        cnt += 1
 
 def project2cone2(gradient, memories, margin=0.5, eps=1e-3):
     """

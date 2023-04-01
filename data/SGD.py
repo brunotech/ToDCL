@@ -38,11 +38,15 @@ def preprocessSGD_(split, develop=False):
             dialogue = json.load(open(f))
             for d in dialogue:
                 # dial = {"id":d["dialogue_id"], "services": [ remove_numbers_from_string(s) for s in d["services"]],"dataset":"SGD"}
-                dial = {"id":d["dialogue_id"], "services": ["SGD_"+s for s in d["services"]],"dataset":"SGD"}
+                dial = {
+                    "id": d["dialogue_id"],
+                    "services": [f"SGD_{s}" for s in d["services"]],
+                    "dataset": "SGD",
+                }
                 turns =[]
                 dst_prev = []
                 for t_idx, t in enumerate(d["turns"]):
-                    if(t["speaker"]=="USER"):
+                    if (t["speaker"]=="USER"):
                         turns.append({"dataset":"SGD","id":d["dialogue_id"],"turn_id":t_idx,"spk":t["speaker"],"utt":t["utterance"]})
                         dst_api = get_dict(t["frames"])
                         str_API = ''
@@ -81,8 +85,25 @@ def preprocessSGD_(split, develop=False):
                                 str_ACT = str_ACT[:-1]
                             str_ACT += ") "
 
-                        turns.append({"dataset":"SGD","id":d["dialogue_id"],"turn_id":t_idx,"spk":"API-OUT","utt":str_ACT,"service":serv})
-                        turns.append({"dataset":"SGD","id":d["dialogue_id"],"turn_id":t_idx,"spk":t["speaker"],"utt":t["utterance"]})
+                        turns.extend(
+                            (
+                                {
+                                    "dataset": "SGD",
+                                    "id": d["dialogue_id"],
+                                    "turn_id": t_idx,
+                                    "spk": "API-OUT",
+                                    "utt": str_ACT,
+                                    "service": serv,
+                                },
+                                {
+                                    "dataset": "SGD",
+                                    "id": d["dialogue_id"],
+                                    "turn_id": t_idx,
+                                    "spk": t["speaker"],
+                                    "utt": t["utterance"],
+                                },
+                            )
+                        )
                 dial["dialogue"] = turns
                 data.append(dial)
             if(develop and i_f==1): break
